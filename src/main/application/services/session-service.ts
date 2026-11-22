@@ -204,6 +204,8 @@ export class SessionService {
     const next = payload?.['session_id'];
     if (!session || session.harness !== 'claude' || typeof next !== 'string' || next === session.conversationId) return;
     session.conversationId = next;
+    // The new transcript has no assistant usage yet: keeping the old metrics would leave the context bar full after /clear or /compact.
+    delete session.metrics;
     for (const listener of this.activityListeners) listener(sessionId);
   }
 

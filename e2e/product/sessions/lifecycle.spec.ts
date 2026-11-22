@@ -189,3 +189,35 @@ test.describe('Sessions › starting and ending a session', () => {
     await expect(page.getByTestId('status-needs-you')).toHaveCount(0);
   });
 });
+
+test.describe('Sessions › theme', () => {
+  test('Flipping light/dark keeps the same terminal and the same running session', async () => {
+    const { page } = session;
+    const before = (await list()).map((s) => s.sessionId);
+    await page.getByTestId('workspace-sessions-new').click();
+    await expect.poll(async () => (await list()).filter((s) => !before.includes(s.sessionId)).length).toBe(1);
+    const created = (await list()).find((s) => !before.includes(s.sessionId))!;
+    await expect.poll(async () => (await find(created.sessionId))?.activity).toBe('idle');
+    await type(created.sessionId, 'Theme check');
+    const tab = page.getByTestId(`workbench-tab-session:${created.sessionId}`);
+    await expect(tab).toContainText('Theme check', { timeout: 15_000 });
+
+    const terminal = page.locator('[data-testid="session-terminal"]:visible');
+    await terminal.evaluate((el) => el.setAttribute('data-probe', 'same-element'));
+
+    const setTheme = (command: string): Promise<void> =>
+      session.app.evaluate(({ BrowserWindow }, cmd) => {
+        BrowserWindow.getAllWindows()[0]?.webContents.send('desktop:menu-command', { command: cmd });
+      }, command);
+
+    for (const command of ['theme-dark', 'theme-light']) {
+      await setTheme(command);
+      await expect(page.locator('[data-testid="session-terminal"][data-probe="same-element"]')).toHaveCount(1);
+      const height = await page.locator('[data-testid="session-status-line"]:visible').evaluate((el) => el.getBoundingClientRect().height);
+      expect(height).toBe(28);
+      expect((await find(created.sessionId))?.status).toBe('running');
+      await expect(tab).toHaveAttribute('aria-pressed', 'true');
+    }
+  });
+});
+

@@ -18,6 +18,7 @@ const props = () => ({
   onOpen: vi.fn(),
   onRemoved: vi.fn(),
   onEditLaunchJson: vi.fn(),
+  onOpenLaunchPicker: vi.fn(),
   onError: vi.fn(),
 });
 
@@ -101,24 +102,45 @@ describe('TerminalsSection', () => {
     expect(p.onOpen).toHaveBeenCalledWith(expect.objectContaining({ terminalId: 'a' }));
   });
 
-  it('the + menu lists root, folder picker and launch configs; unsupported ones are disabled', async () => {
+  it('the + menu offers root, folder picker and a single launch-picker entry (no per-config items)', async () => {
     const user = userEvent.setup();
     answer({
       'terminal.list': [],
+      'workspace.getActive': { id: 'w1', name: 'W', rootPath: '/repos/acme', createdAt: '' },
       'launchConfig.list': {
         workspaceId: 'w1',
-        configs: [
-          { name: 'dev', type: 'node', request: 'launch', program: 'x', args: [], supported: true },
-          { name: 'web', type: 'chrome', request: 'launch', args: [], supported: false },
-        ],
+        configs: [{ name: 'dev', type: 'node', request: 'launch', program: 'x', args: [], supported: true }],
       },
     });
-    renderWithShell(<TerminalsSection {...props()} />);
+    const p = props();
+    renderWithShell(<TerminalsSection {...p} />);
     await user.click(await screen.findByTestId('terminals-new-menu'));
     expect(await screen.findByTestId('terminals-menu-root')).toBeInTheDocument();
     expect(screen.getByTestId('terminals-menu-pick')).toBeInTheDocument();
-    expect(screen.getByTestId('terminals-menu-launch-dev')).not.toHaveAttribute('aria-disabled', 'true');
-    expect(screen.getByTestId('terminals-menu-launch-web')).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByTestId('terminals-menu-launch-dev')).not.toBeInTheDocument();
+    await user.click(await screen.findByTestId('terminals-menu-open-launch-picker'));
+    expect(p.onOpenLaunchPicker).toHaveBeenCalled();
+  });
+
+  it('offers the launch picker even when launch.json has no configs', async () => {
+    const user = userEvent.setup();
+    answer({
+      'terminal.list': [],
+      'workspace.getActive': { id: 'w1', name: 'W', rootPath: '/repos/acme', createdAt: '' },
+      'launchConfig.list': { workspaceId: 'w1', configs: [] },
+    });
+    renderWithShell(<TerminalsSection {...props()} />);
+    await user.click(await screen.findByTestId('terminals-new-menu'));
+    expect(await screen.findByTestId('terminals-menu-open-launch-picker')).toHaveTextContent('Executar configuração…');
+  });
+
+  it('hides the launch picker entry at Início (launchConfig.list → null)', async () => {
+    const user = userEvent.setup();
+    answer({ 'terminal.list': [], 'workspace.getActive': null, 'launchConfig.list': null });
+    renderWithShell(<TerminalsSection {...props()} />);
+    await user.click(await screen.findByTestId('terminals-new-menu'));
+    expect(await screen.findByTestId('terminals-menu-root')).toBeInTheDocument();
+    expect(screen.queryByTestId('terminals-menu-open-launch-picker')).not.toBeInTheDocument();
   });
 
   it('"Novo terminal em…" filters the workspace folders and Enter opens a shell in the match', async () => {

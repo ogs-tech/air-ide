@@ -1,15 +1,21 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, Tooltip, Typography } from '@mui/material';
+import { useState } from 'react';
+import { Alert, Button, Stack, Tooltip, Typography } from '@mui/material';
 import { callIpc, IpcCallError } from '../../lib/ipc.js';
 import { useSetExternalConsent } from '../../hooks/use-external-sessions.js';
 import { compareRows, UNTITLED_LABEL, type SessionRowState } from '../../lib/session-attention.js';
 import type { ExternalSession } from '../../../shared/external-session.js';
 import type { SessionSnapshot, SessionSnapshotWithOutput } from '../../../shared/session.js';
 import { SessionRow } from './SessionRow.js';
-import { getObserveRequest, requestObserve, subscribeObserve } from '../../lib/external-observe-store.js';
+import { requestOpenExternal } from '../../lib/external-open-store.js';
 
 export function externalStateOf(session: ExternalSession): SessionRowState {
   return session.closed ? 'exited' : (session.activity ?? 'idle');
+}
+
+/** The conversation can be taken over once nothing is typing into it (idle or closed) and its folder is known. */
+export function canAssumeExternal(session: ExternalSession): boolean {
+  const state = externalStateOf(session);
+  return session.cwd !== null && (state === 'idle' || state === 'exited');
 }
 
 /** One-time consent: exact state needs hooks in the harnesses' own config; "Só estimado" touches nothing. */
@@ -51,40 +57,6 @@ export function ExternalConsentBanner(): React.ReactElement {
   );
 }
 
-/** Read-only live view of an external conversation's transcript tail; refreshed whenever the external list changes. */
-function ObserveDialog({ session, onClose }: { session: ExternalSession; onClose: () => void }): React.ReactElement {
-  const [text, setText] = useState('');
-  useEffect(() => {
-    let active = true;
-    const load = (): void => {
-      void callIpc<string>('externalSession.tail', { id: session.id })
-        .then((tail) => {
-          if (active) setText(typeof tail === 'string' ? tail : '');
-        })
-        .catch(() => {});
-    };
-    load();
-    const off = window.api.externalSession.onChanged(load);
-    return () => {
-      active = false;
-      off();
-    };
-  }, [session.id]);
-  return (
-    <Dialog open onClose={onClose} fullWidth maxWidth="md" data-testid="external-observe-dialog">
-      <DialogTitle>{`Observando ${session.title ?? UNTITLED_LABEL} (somente leitura)`}</DialogTitle>
-      <DialogContent>
-        <Box component="pre" sx={{ m: 0, fontSize: '0.75rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} data-testid="external-observe-text">
-          {text || 'Sem transcrição disponível para esta sessão.'}
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Fechar</Button>
-      </DialogActions>
-    </Dialog>
-  );
-}
-
 interface ExternalSessionRowsProps {
   sessions: readonly ExternalSession[];
   filter: SessionRowState | null;
@@ -95,14 +67,6 @@ interface ExternalSessionRowsProps {
 
 /** External sessions as rows of the same list: same indicator, labelled "externa · <terminal>", dashed when only estimated. */
 export function ExternalSessionRows({ sessions, filter, now, onAssumed, onError }: ExternalSessionRowsProps): React.ReactElement | null {
-  const [observed, setObserved] = useState<ExternalSession | null>(null);
-  const requestedId = useSyncExternalStore(subscribeObserve, getObserveRequest);
-  // A clicked notification names the session; the dialog follows it live from the current list.
-  const observing = observed ?? sessions.find((s) => s.id === requestedId) ?? null;
-  const setObserving = (session: ExternalSession | null): void => {
-    setObserved(session);
-    if (session === null) requestObserve(null);
-  };
   const rows = sessions
     .map((session) => ({ session, state: externalStateOf(session) }))
     .filter((row) => filter === null || row.state === filter)
@@ -125,7 +89,7 @@ export function ExternalSessionRows({ sessions, filter, now, onAssumed, onError 
   return (
     <>
       {rows.map(({ session, state }) => {
-        const canAssume = session.cwd !== null && (session.closed || session.activity === 'idle');
+        const canAssume = canAssumeExternal(session);
         const subtitle = [
           `externa${session.terminal ? ` · ${session.terminal}` : ''}`,
           session.label,
@@ -149,14 +113,9 @@ export function ExternalSessionRows({ sessions, filter, now, onAssumed, onError 
             estimated={session.precision === 'estimated'}
             now={now}
             history={null}
-            onOpen={() => setObserving(session)}
+            onOpen={() => requestOpenExternal(session.id)}
             actions={
               <>
-                <Tooltip title="Observar (somente leitura)">
-                  <Button size="small" sx={{ minWidth: 0, px: 0.75, fontSize: '0.625rem' }} onClick={(e) => { e.stopPropagation(); setObserving(session); }} data-testid={`external-observe-${session.id}`}>
-                    Observar
-                  </Button>
-                </Tooltip>
                 <Tooltip title={canAssume ? 'Retomar esta conversa no app' : 'Disponível quando a sessão externa estiver ociosa ou fechada'}>
                   <span>
                     <Button size="small" disabled={!canAssume} sx={{ minWidth: 0, px: 0.75, fontSize: '0.625rem' }} onClick={(e) => { e.stopPropagation(); void assume(session); }} data-testid={`external-assume-${session.id}`}>
@@ -169,7 +128,6 @@ export function ExternalSessionRows({ sessions, filter, now, onAssumed, onError 
           />
         );
       })}
-      {observing && <ObserveDialog session={observing} onClose={() => setObserving(null)} />}
     </>
   );
 }

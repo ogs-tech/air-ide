@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { restoreTabs, toPersisted, type OpenTab, type RestoreContext } from '../../../../src/renderer/screens/workspace/open-tabs.js';
+import { isForeignSessionTab, restoreTabs, toPersisted, type OpenTab, type RestoreContext } from '../../../../src/renderer/screens/workspace/open-tabs.js';
 import type { Skill } from '../../../../src/shared/entity.js';
 
 const skill = { urn: 'urn:skill:x', name: 'x', content: 'fresh from disk' } as unknown as Skill;
@@ -47,5 +47,28 @@ describe('restoreTabs', () => {
   it('rebuilds an entity tab with the entity as it is on disk now', async () => {
     const [tab] = await restoreTabs([{ id: 'entity:urn:skill:x', kind: 'entity', entityKind: 'skill', urn: skill.urn }], ctx());
     expect(tab).toMatchObject({ kind: 'skill', entity: skill, isCreate: false });
+  });
+});
+
+describe('isForeignSessionTab', () => {
+  const tab = (scopeId?: string | null): OpenTab => ({
+    id: 'session:s1',
+    kind: 'session',
+    anchor: { kind: 'personal' },
+    sessionId: 's1',
+    label: 'Início',
+    ...(scopeId !== undefined ? { scopeId } : {}),
+  });
+
+  it('is foreign only when its scope differs from the active one', () => {
+    expect(isForeignSessionTab(tab(null), 'w1')).toBe(true);
+    expect(isForeignSessionTab(tab('w2'), null)).toBe(true);
+    expect(isForeignSessionTab(tab('w1'), 'w1')).toBe(false);
+    expect(isForeignSessionTab(tab(null), null)).toBe(false);
+  });
+
+  it('treats a tab without a known scope (restored) and non-session tabs as local', () => {
+    expect(isForeignSessionTab(tab(), 'w1')).toBe(false);
+    expect(isForeignSessionTab({ id: 'history', kind: 'history' }, 'w1')).toBe(false);
   });
 });

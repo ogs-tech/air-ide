@@ -37,6 +37,33 @@ export const surfaces = {
   dark: { canvas: '#0F1828', paper: '#16223A', rail: '#1B2944', input: '#16223A' },
 } as const;
 
+/**
+ * Workbench chrome (tab strip, active tab, session footer, diff bodies).
+ * The strip sits one step *below* `rail` so the active tab — `paper` — reads
+ * as joined to the content; the footer stays in the `input` family so it
+ * matches the terminal body in both modes.
+ */
+export const workbench = {
+  light: {
+    strip: '#E6E0D2',
+    tabActive: '#FFFFFF',
+    tabHover: '#EEE9DC',
+    footer: '#F3F0E7',
+    footerMuted: '#5A6573',
+    diffAdd: 'rgba(17,147,80,0.12)',
+    diffRemove: 'rgba(192,57,43,0.12)',
+  },
+  dark: {
+    strip: '#0B1320',
+    tabActive: '#16223A',
+    tabHover: '#111B2E',
+    footer: '#1A2740',
+    footerMuted: '#9AA0A8',
+    diffAdd: 'rgba(63,185,122,0.16)',
+    diffRemove: 'rgba(226,103,90,0.16)',
+  },
+} as const;
+
 export const text = {
   light: { primary: '#142036', secondary: '#5A6573' },
   dark: { primary: '#F2EEE5', secondary: '#9AA0A8' },

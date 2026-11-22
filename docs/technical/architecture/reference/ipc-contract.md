@@ -315,7 +315,7 @@ Paths are repo-relative: absolute paths, `..` segments, NUL bytes and empty stri
 
 ### `launchConfig`
 
-Read-only discovery over the open workspace's own `.vscode/launch.json` (one file, at the workspace root — a sub-folder's launch file is reached by opening that folder as its own workspace), plus running a `type: "node"`,
+Read-only discovery over the open workspace's `.vscode/launch.json` — one per folder: `list`/`run` take an optional `folder` (an absolute workspace folder) for multi-folder workspaces and default to the primary root — plus running a `type: "node"`,
 `request: "launch"` configuration — which now means **creating a [terminal](#terminal)** that runs the resolved
 command. See [the integrated-terminals design](../../../superpowers/specs/2026-10-25-integrated-terminals-design.md).
 Not Entity-backed (no `urn`, no `scopes`) — same precedent as `hook`/`mcp`.
@@ -323,7 +323,7 @@ Not Entity-backed (no `urn`, no `scopes`) — same precedent as `hook`/`mcp`.
 | Method | Params | Result |
 |---|---|---|
 | `launchConfig.list` | `{ folder? }` | `WorkspaceLaunchConfigs \| null` (`null` at Início) |
-| `launchConfig.run` | `{ configName: string }` | `TerminalSnapshot` (`kind: 'launch'`) |
+| `launchConfig.run` | `{ configName: string; folder?: string }` | `TerminalSnapshot` (`kind: 'launch'`) |
 
 There is no `launchConfig.kill`/`status`: stopping and replaying a launched process are `terminal.kill` /
 `terminal.status`, since it is a terminal like any other.

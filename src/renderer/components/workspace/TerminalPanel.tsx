@@ -1,15 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { Box } from '@mui/material';
+import { Box, useTheme } from '@mui/material';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import { attachEmbeddedBrowserLinks, embeddedBrowserLinkHandler } from '../../lib/terminal-links.js';
 import { callIpc } from '../../lib/ipc.js';
 import { createTerminalWriteBatcher } from '../../lib/terminal-write-batcher.js';
-import { ogs } from '../../tokens.js';
+import { terminalTheme } from '../../lib/terminal-theme.js';
 import type { TerminalSnapshotWithOutput } from '../../../shared/terminal.js';
-
-const TERMINAL_XTERM_THEME = { background: ogs.ink, foreground: ogs.cream, cursor: ogs.cream };
 
 /** Which IPC methods back this panel — workspace terminals by default; the Config setup dialog points at `channelSetup.*`. */
 export interface TerminalPanelIpc {
@@ -36,13 +34,20 @@ export function TerminalPanel({ terminalId, ipc = WORKSPACE_TERMINAL_IPC, visibl
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const mode = useTheme().palette.mode;
+  // Read through a ref so a light/dark flip never re-runs the creation effect (no remount, scrollback kept).
+  const modeRef = useRef(mode);
+  // Declared before the creation effect so the first mount already sees the current mode.
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
 
   useEffect(() => {
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
       fontSize: 13,
-      theme: TERMINAL_XTERM_THEME,
+      theme: terminalTheme(modeRef.current),
       linkHandler: embeddedBrowserLinkHandler,
     });
     const fitAddon = new FitAddon();
@@ -115,6 +120,10 @@ export function TerminalPanel({ terminalId, ipc = WORKSPACE_TERMINAL_IPC, visibl
   }, [terminalId, ipc, visible]);
 
   useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.theme = terminalTheme(mode);
+  }, [mode]);
+
+  useEffect(() => {
     if (visible) terminalRef.current?.focus();
   }, [visible]);
 
@@ -124,7 +133,7 @@ export function TerminalPanel({ terminalId, ipc = WORKSPACE_TERMINAL_IPC, visibl
     // includes padding — so a padded host yields too many columns, the grid
     // overflows horizontally, the scrollbar toggles the layout and the
     // ResizeObserver re-fits in a loop (visible as flicker).
-    <Box sx={{ height: '100%', width: '100%', bgcolor: ogs.ink, p: 1, boxSizing: 'border-box' }}>
+    <Box sx={{ height: '100%', width: '100%', bgcolor: terminalTheme(mode).background, p: 1, boxSizing: 'border-box' }}>
       <Box
         ref={containerRef}
         data-testid={`terminal-panel-${terminalId}`}

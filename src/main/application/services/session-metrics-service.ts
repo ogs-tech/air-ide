@@ -2,6 +2,9 @@ import type { SessionSnapshot } from '../../../shared/session.js';
 import type { SessionMetrics } from '../../../shared/session-metrics.js';
 import type { SessionTranscriptPort } from '../ports/session-transcript-port.js';
 
+/** Short enough that the context bar tracks a tool-heavy turn; the tail read is a single bounded slice. */
+const DEFAULT_THROTTLE_MS = 500;
+
 export interface SessionMetricsDeps {
   transcripts: Pick<SessionTranscriptPort, 'readLiveMetrics'>;
   sessions: {
@@ -28,7 +31,7 @@ export class SessionMetricsService {
   /** Wire to `SessionService.onActivity`. Its own write re-enters here once and is ignored. */
   request(sessionId: string): void {
     if (this.writing || this.pending.has(sessionId)) return;
-    const wait = Math.max(0, (this.lastRead.get(sessionId) ?? 0) + (this.deps.throttleMs ?? 2000) - Date.now());
+    const wait = Math.max(0, (this.lastRead.get(sessionId) ?? 0) + (this.deps.throttleMs ?? DEFAULT_THROTTLE_MS) - Date.now());
     const timer = setTimeout(() => {
       this.pending.delete(sessionId);
       void this.refresh(sessionId);

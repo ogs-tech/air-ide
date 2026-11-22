@@ -5,7 +5,7 @@ import { defineConfig } from '@playwright/test';
 // One Playwright project per area (= one folder under e2e/product/ and e2e/technical/; same area names as docs/).
 // In `npm run e2e:ui` they show up as checkboxes, and `npm run e2e -- --project=sessions` runs a single area.
 // Conversations started outside the app (CLI hooks, no UI journey) are tagged `@integration`; `--grep-invert @integration` skips them.
-const AREAS = ['sessions', 'channels', 'workspaces', 'customizations', 'editor'] as const;
+const AREAS = ['sessions', 'channels', 'workspaces', 'customizations', 'editor', 'source-control', 'shell'] as const;
 
 export default defineConfig({
   testDir: './e2e',

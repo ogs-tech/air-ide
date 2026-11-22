@@ -7,7 +7,10 @@ import { useGitInit, useGitStatus } from '../../../hooks/use-git.js';
 import { useSessions } from '../../../hooks/use-sessions.js';
 import { useSessionHistoryStats } from '../../../hooks/use-session-history.js';
 import { useWorkspaceInstruction } from '../../../hooks/use-instructions.js';
-import { useLaunchConfigs, useRunLaunchConfig } from '../../../hooks/use-launch-configs.js';
+import { useAllLaunchConfigs, useRunLaunchConfig } from '../../../hooks/use-launch-configs.js';
+import { useFolderRouting } from '../../../hooks/use-folder-routing.js';
+import { useTerminals } from '../../../hooks/use-terminals.js';
+import { dropStaleRecents, pushLaunchRecent, rankLaunchEntries, readLaunchRecents } from '../../../lib/launch-picker.js';
 import { seedWorkspaceInstruction } from '../../../lib/instruction-seed.js';
 import { formatCostUsd, formatWhen } from '../../../lib/format-session-history.js';
 import type { Instruction } from '../../../../shared/entity.js';
@@ -25,8 +28,13 @@ interface WorkspaceOverviewProps {
   onOpenSession: (session: SessionSnapshot) => void;
   onOpenInstruction: (entity: Instruction, isCreate: boolean) => void;
   onOpenTerminal: (terminal: TerminalSnapshot) => void;
+  /** "Ver todas": opens the workspace-wide launch picker. */
+  onOpenLaunchPicker: () => void;
   onError: (message: string) => void;
 }
+
+/** The card is a shortcut to the likely runs; the picker holds the rest. */
+const LAUNCH_CARD_MAX = 5;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -45,6 +53,7 @@ export function WorkspaceOverview({
   onOpenSession,
   onOpenInstruction,
   onOpenTerminal,
+  onOpenLaunchPicker,
   onError,
 }: WorkspaceOverviewProps): React.ReactElement {
   const { data: git } = useGitStatus({ visible });
@@ -52,13 +61,16 @@ export function WorkspaceOverview({
   const { data: sessions } = useSessions();
   const { data: todayStats } = useSessionHistoryStats({ kind: 'workspace', workspaceId: workspace.id }, todayFilters());
   const { data: instruction } = useWorkspaceInstruction(workspace.id);
-  const { data: launch } = useLaunchConfigs();
+  const { entries: launchEntries } = useAllLaunchConfigs();
+  const { data: terminals = [] } = useTerminals();
+  const routing = useFolderRouting();
   const runConfig = useRunLaunchConfig();
 
   // Activation kills every session of the context being left, so whatever is
   // live is this workspace's.
   const live = (sessions ?? []).filter((s) => s.status === 'running' && s.scopeId === workspace.id);
-  const launchConfigs = launch?.configs ?? [];
+  const rankedLaunch = rankLaunchEntries(launchEntries, '', terminals, dropStaleRecents(readLaunchRecents(workspace.id), launchEntries));
+  const launchShown = rankedLaunch.slice(0, LAUNCH_CARD_MAX);
 
   return (
     <OverviewGrid testId="workspace-overview">
@@ -145,36 +157,53 @@ export function WorkspaceOverview({
         )}
       </OverviewCard>
 
-      {launchConfigs.length > 0 && (
-        <OverviewCard testId="overview-card-launch" glyph={Play} title="Launch">
-          {launchConfigs.map((config) => (
-            <OverviewRow
-              key={config.name}
-              testId={`overview-launch-${config.name}`}
-              primary={config.name}
-              secondary={config.type}
-              trailing={
-                config.supported ? (
-                  <Stack direction="row">
-                    <Button
-                      size="small"
-                      data-testid={`overview-launch-run-${config.name}`}
-                      aria-label={`Executar ${config.name}`}
-                      sx={{ minWidth: 0, p: 0.25 }}
-                      onClick={() =>
-                        runConfig.mutate(
-                          { configName: config.name },
-                          { onSuccess: (terminal) => onOpenTerminal(terminal), onError: (err) => onError(errorMessage(err)) },
-                        )
-                      }
-                    >
-                      <Icon glyph={Play} size={14} />
-                    </Button>
-                  </Stack>
-                ) : undefined
-              }
-            />
-          ))}
+      {rankedLaunch.length > 0 && (
+        <OverviewCard
+          testId="overview-card-launch"
+          glyph={Play}
+          title="Launch"
+          {...(rankedLaunch.length > LAUNCH_CARD_MAX
+            ? { action: <OverviewLink testId="overview-launch-see-all" onClick={onOpenLaunchPicker}>{`Ver todas (${rankedLaunch.length})…`}</OverviewLink> }
+            : {})}
+        >
+          {launchShown.map((entry) => {
+            const { config } = entry;
+            const id = entry.folderLabel ? `${config.name}-${entry.folderLabel}` : config.name;
+            return (
+              <OverviewRow
+                key={`${entry.folder}\u0000${config.name}`}
+                testId={`overview-launch-${id}`}
+                primary={config.name}
+                secondary={entry.folderLabel || config.type}
+                trailing={
+                  config.supported ? (
+                    <Stack direction="row">
+                      <Button
+                        size="small"
+                        data-testid={`overview-launch-run-${id}`}
+                        aria-label={`Executar ${config.name}`}
+                        sx={{ minWidth: 0, p: 0.25 }}
+                        onClick={() =>
+                          runConfig.mutate(
+                            { configName: config.name, ...(routing.multi ? { folder: entry.folder } : {}) },
+                            {
+                              onSuccess: (terminal) => {
+                                pushLaunchRecent(workspace.id, { folder: entry.folder, name: config.name });
+                                onOpenTerminal(terminal);
+                              },
+                              onError: (err) => onError(errorMessage(err)),
+                            },
+                          )
+                        }
+                      >
+                        <Icon glyph={Play} size={14} />
+                      </Button>
+                    </Stack>
+                  ) : undefined
+                }
+              />
+            );
+          })}
         </OverviewCard>
       )}
     </OverviewGrid>

@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, waitFor } from '@testing-library/react';
+import { ThemeProvider } from '@mui/material';
+import { createAppTheme } from '../../../../src/renderer/theme.js';
+import { terminalTheme } from '../../../../src/renderer/lib/terminal-theme.js';
 import { TerminalPanel } from '../../../../src/renderer/components/workspace/TerminalPanel.js';
 import * as ipc from '../../../../src/renderer/lib/ipc.js';
 
 const xterm = vi.hoisted(() => ({
-  instances: [] as Array<{ write: ReturnType<typeof vi.fn>; open: ReturnType<typeof vi.fn>; emitData: (d: string) => void; dispose: ReturnType<typeof vi.fn> }>,
+  instances: [] as Array<{ write: ReturnType<typeof vi.fn>; open: ReturnType<typeof vi.fn>; emitData: (d: string) => void; dispose: ReturnType<typeof vi.fn>; options: { theme?: { background?: string } } }>,
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -21,7 +24,9 @@ vi.mock('@xterm/xterm', () => ({
       return { dispose: vi.fn() };
     });
     emitData = (d: string): void => this.dataListener?.(d);
-    constructor() {
+    options: { theme?: { background?: string } };
+    constructor(options: { theme?: { background?: string } } = {}) {
+      this.options = { ...options };
       xterm.instances.push(this);
     }
   },
@@ -118,5 +123,20 @@ describe('TerminalPanel', () => {
     expect(xterm.instances[0]!.dispose).toHaveBeenCalled();
     expect(unsubscribe).toHaveBeenCalled();
     expect(ipc.callIpc).not.toHaveBeenCalledWith('terminal.kill', expect.anything());
+  });
+
+  it('follows the app theme live: same xterm instance, no remount, theme swapped in place', () => {
+    const tree = (mode: 'light' | 'dark'): React.ReactElement => (
+      <ThemeProvider theme={createAppTheme(mode)}>
+        <TerminalPanel terminalId="t1" />
+      </ThemeProvider>
+    );
+    const { rerender } = render(tree('dark'));
+    expect(xterm.instances[0]!.options.theme!.background).toBe(terminalTheme('dark').background);
+
+    rerender(tree('light'));
+    expect(xterm.instances).toHaveLength(1);
+    expect(xterm.instances[0]!.dispose).not.toHaveBeenCalled();
+    expect(xterm.instances[0]!.options.theme!.background).toBe(terminalTheme('light').background);
   });
 });

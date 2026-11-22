@@ -41,3 +41,16 @@ describe('createAppTheme — OGS mapping', () => {
     expect(t.shape.borderRadius).toBe(14);
   });
 });
+
+describe('createAppTheme — workbench tokens', () => {
+  it.each(['light', 'dark'] as const)('exposes the workbench surfaces in %s', (mode) => {
+    const wb = createAppTheme(mode).ogs.workbench;
+    for (const key of ['strip', 'tabActive', 'tabHover', 'footer', 'footerMuted', 'diffAdd', 'diffRemove'] as const) {
+      expect(wb[key]).toBeTruthy();
+    }
+  });
+  it('makes the strip darker than the content paper in light mode', () => {
+    const t = createAppTheme('light');
+    expect(t.ogs.workbench.strip).not.toBe(t.ogs.surfaces.paper);
+  });
+});

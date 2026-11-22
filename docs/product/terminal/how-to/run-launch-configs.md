@@ -13,8 +13,14 @@ debugger: no breakpoints, no attach. The file is never modified. Contract:
 ## Run one
 
 1. In the Explorer's **Terminais** section (bottom of the panel), open the **＋ ▾** menu.
-2. Pick a configuration (`▶ <name>`). It starts as a terminal and opens in a tab; it has keyboard input, so
-   Ctrl+C works.
+2. Choose **Executar configuração…**. A picker lists the configurations of **every folder** of the workspace
+   (the folder shows as a tag when the workspace has more than one). Type to filter by name or folder, ↑↓ to
+   move, ⏎ to run. It starts as a terminal and opens in a tab; it has keyboard input, so Ctrl+C works.
+
+The picker lists what is already running (`● rodando`) first, then your recent runs. ⏎ on a running
+configuration focuses its tab; ⇧⏎ starts another one. Unsupported entries are hidden behind
+**Mostrar não suportadas**. The workspace overview's Launch card shows the first five and links to the picker
+(**Ver todas**).
 
 Running the same configuration twice starts two independent terminals. Closing the tab does not stop it — the
 row stays in **Terminais** (marked `sem aba`) and you can click it to reopen the tab with its output replayed.
@@ -36,10 +42,10 @@ node <program> <args…>
 
 - `cwd` defaults to the workspace folder.
 - `env` is passed through, on top of the app's environment.
-- `${workspaceFolder}` in `program`, `args` and `cwd` becomes the **workspace** folder. It is the only
+- `${workspaceFolder}` in `program`, `args` and `cwd` becomes the folder that owns that `launch.json`. It is the only
   VS Code variable resolved; anything else (`${file}`, `${env:…}`, `preLaunchTask`, `runtimeExecutable`,
   `runtimeArgs`) is ignored.
-- To edit the file, use **Editar launch.json** at the end of the **＋ ▾** menu.
+- To edit a file, use **Editar launch.json** in the picker (it opens the folder of the highlighted row) or at the end of the **＋ ▾** menu.
 
 `launch.json` may contain comments and trailing commas, as in VS Code. If it cannot be parsed, or an entry
 is malformed, the row shows the error instead of the configurations. A workspace with no `launch.json` simply

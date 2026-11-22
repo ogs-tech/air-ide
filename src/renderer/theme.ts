@@ -9,6 +9,7 @@ import {
   radius,
   shadow,
   fonts,
+  workbench,
 } from './tokens.js';
 
 declare module '@mui/material/styles' {
@@ -19,6 +20,7 @@ declare module '@mui/material/styles' {
       radius: typeof radius;
       shadow: typeof shadow;
       fonts: typeof fonts;
+      workbench: { [K in keyof typeof workbench.light]: string };
     };
   }
   interface ThemeOptions {
@@ -37,6 +39,7 @@ export function createAppTheme(mode: PaletteMode): Theme {
   const roles = isDark ? colorRoles.dark : colorRoles.light;
   const surf = isDark ? surfaces.dark : surfaces.light;
   const txt = isDark ? text.dark : text.light;
+  const wb = isDark ? workbench.dark : workbench.light;
 
   return createTheme({
     palette: {
@@ -63,6 +66,7 @@ export function createAppTheme(mode: PaletteMode): Theme {
       radius,
       shadow,
       fonts,
+      workbench: wb,
     },
     shape: { borderRadius: radius.md },
     typography: {

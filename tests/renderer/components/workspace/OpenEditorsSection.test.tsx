@@ -3,11 +3,12 @@ import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { File as FileIcon } from 'lucide-react';
 import { OpenEditorsSection } from '../../../../src/renderer/components/workspace/OpenEditorsSection.js';
-import type { WorkbenchTab } from '../../../../src/renderer/components/workspace/WorkbenchCanvas.js';
+import type { WorkbenchTab } from '../../../../src/renderer/components/workspace/workbench-tab.js';
 import { renderWithTheme } from '../../test-utils.js';
 
 const tab = (id: string, over: Partial<WorkbenchTab> = {}): WorkbenchTab => ({
   id,
+  kind: 'file',
   glyph: FileIcon,
   label: id,
   render: () => null,

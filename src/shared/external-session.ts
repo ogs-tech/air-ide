@@ -44,5 +44,7 @@ export const EXTERNAL_SESSIONS_CHANNEL = 'external-sessions:changed' as const;
 /** Thresholds (starting values, per spec; tune with measurements). */
 export const EXTERNAL_WORKING_WINDOW_MS = 3_000;
 export const EXTERNAL_TAIL_BYTES = 8 * 1024;
+/** How much of the transcript the read-only conversation view loads (`externalSession.tail`): enough for a readable stretch of the conversation. */
+export const EXTERNAL_VIEW_BYTES = 256 * 1024;
 export const EXTERNAL_SCAN_VISIBLE_MS = 5_000;
 export const EXTERNAL_SCAN_HIDDEN_MS = 30_000;

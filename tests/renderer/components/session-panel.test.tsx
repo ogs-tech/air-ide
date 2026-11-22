@@ -6,7 +6,12 @@ import {
   getBrowserTabsSnapshot,
   resetBrowserTabsForTests,
 } from '../../../src/renderer/lib/browser-tabs-store.js';
-import { mockApi, ok, fail, renderWithQuery, type CallSpy } from '../test-utils.js';
+import { render } from '@testing-library/react';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ThemeProvider } from '@mui/material';
+import { createAppTheme } from '../../../src/renderer/theme.js';
+import { terminalTheme } from '../../../src/renderer/lib/terminal-theme.js';
+import { makeTestQueryClient, mockApi, ok, fail, renderWithQuery, type CallSpy } from '../test-utils.js';
 
 interface MockTerminal {
   write: ReturnType<typeof vi.fn>;
@@ -18,6 +23,8 @@ interface MockTerminal {
   attachCustomKeyEventHandler: ReturnType<typeof vi.fn>;
   _onDataCb: ((data: string) => void) | undefined;
   _keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+  options: { theme?: { background?: string } };
+  oscHandlers: Map<number, (payload: string) => boolean>;
 }
 
 const mockTerminalInstances: MockTerminal[] = [];
@@ -32,6 +39,14 @@ vi.mock('@xterm/xterm', () => {
     registerLinkProvider = vi.fn();
     _onDataCb: ((data: string) => void) | undefined;
     _keyHandler: ((event: KeyboardEvent) => boolean) | undefined;
+    options: { theme?: { background?: string } };
+    oscHandlers = new Map<number, (payload: string) => boolean>();
+    parser = {
+      registerOscHandler: vi.fn((code: number, handler: (payload: string) => boolean) => {
+        this.oscHandlers.set(code, handler);
+        return { dispose: vi.fn() };
+      }),
+    };
     onData = vi.fn((cb: (data: string) => void) => {
       this._onDataCb = cb;
       return { dispose: vi.fn() };
@@ -39,7 +54,8 @@ vi.mock('@xterm/xterm', () => {
     attachCustomKeyEventHandler = vi.fn((handler: (event: KeyboardEvent) => boolean) => {
       this._keyHandler = handler;
     });
-    constructor() {
+    constructor(options: { theme?: { background?: string } } = {}) {
+      this.options = { ...options };
       mockTerminalInstances.push(this);
     }
   }
@@ -223,6 +239,33 @@ describe('<SessionPanel>', () => {
       expect(screen.getByTestId('session-channel')).toHaveAttribute('data-channel', 'cursor');
       expect(screen.getByTestId('session-model')).toHaveTextContent('gpt-5');
       expect(screen.getByTestId('session-cost')).toHaveTextContent('~US$ 0.31');
+    });
+
+    it.each([
+      ['a Claude session with metrics', { harness: 'claude', metrics: { model: 'claude-sonnet-5-5', costUsd: 1.2, contextTokens: 50_000, contextWindow: 200_000 } }],
+      ['a Cursor session (estimated cost, no context bar)', { harness: 'cursor', metrics: { model: 'gpt-5', costUsd: 0.31 } }],
+      ['a session without metrics', { harness: 'claude' }],
+    ] as const)('renders the footer on theme tokens for %s', async (_name, extra) => {
+      const live = snapshot({ activity: 'idle', ...extra });
+      call.mockImplementation(async (method: string) => ok(method === 'session.list' ? [live] : live));
+      renderWithQuery(<SessionPanel anchor={{ kind: 'entity', urn: 'urn:skill:foo' }} sessionId="s1" />);
+      await waitFor(() => expect(screen.getByTestId('session-channel')).toBeInTheDocument());
+      const line = screen.getByTestId('session-status-line');
+      expect(line).toHaveStyle({ height: '28px' });
+      expect(getComputedStyle(line).color).not.toBe('rgb(242, 238, 229)');
+      for (const el of [line, ...Array.from(line.querySelectorAll<HTMLElement>('*'))]) {
+        expect(el.getAttribute('style') ?? '').not.toMatch(/rgba\(255, ?255, ?255/);
+      }
+      const metrics = (extra as { metrics?: { contextWindow?: number } }).metrics;
+      if (metrics?.contextWindow) {
+        expect(screen.getByTestId('session-context')).toBeInTheDocument();
+      } else {
+        expect(screen.queryByTestId('session-context')).toBeNull();
+      }
+      if (!metrics) {
+        expect(screen.queryByTestId('session-model')).toBeNull();
+        expect(screen.queryByTestId('session-cost')).toBeNull();
+      }
     });
 
     it('shows Ocioso with an "iniciando" detail until the first output chunk, even when the status lookup found nothing', async () => {
@@ -888,5 +931,36 @@ describe('<SessionPanel>', () => {
       expect(call).not.toHaveBeenCalledWith('session.stageAttachment', expect.anything());
       expect(call).not.toHaveBeenCalledWith('session.write', expect.anything());
     });
+  });
+
+  it('follows the app theme live without remounting the terminal', () => {
+    const client = makeTestQueryClient();
+    const tree = (mode: 'light' | 'dark'): React.ReactElement => (
+      <QueryClientProvider client={client}>
+        <ThemeProvider theme={createAppTheme(mode)}>
+          <SessionPanel anchor={{ kind: 'entity', urn: 'urn:skill:foo' }} />
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+    const { rerender } = render(tree('dark'));
+    const terminal = mockTerminalInstances[mockTerminalInstances.length - 1]!;
+    expect(terminal.options.theme!.background).toBe(terminalTheme('dark').background);
+
+    const before = mockTerminalInstances.length;
+    rerender(tree('light'));
+    expect(mockTerminalInstances).toHaveLength(before);
+    expect(terminal.dispose).not.toHaveBeenCalled();
+    expect(terminal.options.theme!.background).toBe(terminalTheme('light').background);
+  });
+
+  it('answers the CLI\'s OSC 11 background query with the live theme, so its auto theme matches the app', async () => {
+    call.mockImplementation(async () => ok(null));
+    renderWithQuery(<SessionPanel anchor={{ kind: 'entity', urn: 'urn:skill:foo' }} sessionId="s1" />);
+    await waitFor(() => expect(mockTerminalInstances.length).toBeGreaterThan(0));
+    const term = mockTerminalInstances.at(-1)!;
+    expect(term.oscHandlers.get(11)!('?')).toBe(true);
+    expect(call).toHaveBeenCalledWith('session.write', { sessionId: 's1', data: '\x1b]11;rgb:fbfb/fafa/f6f6\x1b\\' });
+    // Anything but a query is left to xterm.
+    expect(term.oscHandlers.get(11)!('rgb:0000/0000/0000')).toBe(false);
   });
 });

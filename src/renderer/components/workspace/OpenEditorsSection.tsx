@@ -4,7 +4,7 @@ import { X, XCircle } from 'lucide-react';
 import { Icon } from '../ds/Icon.js';
 import { toneColor } from '../../lib/file-icon.js';
 import { SectionAction, SectionHeader } from '../ds/ContainerChrome.js';
-import type { WorkbenchTab } from './WorkbenchCanvas.js';
+import type { WorkbenchTab } from './workbench-tab.js';
 
 interface OpenEditorsSectionProps {
   /** Every closable Workbench tab, in strip order — the pinned "Visão geral" is not one. */

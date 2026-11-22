@@ -1161,6 +1161,15 @@ describe('SessionService activity', () => {
     expect(conversationId).not.toBe('new-id');
   });
 
+  it('drops the old context metrics when the conversation changes, so the bar empties', async () => {
+    const { service, signals } = withSignals();
+    const { sessionId } = await service.spawn(anchor);
+    service.setMetrics(sessionId, { contextTokens: 150_000, contextWindow: 200_000 });
+    expect(service.status(sessionId)?.metrics).toBeDefined();
+    signals.emit(sessionId, { event: 'session-start', payload: { session_id: 'new-id', source: 'compact' } });
+    expect(service.status(sessionId)?.metrics).toBeUndefined();
+  });
+
   it('ends the session on /clear and starts a fresh Untitled one in its place', async () => {
     const { service, signals, claudeSession } = withSignals();
     const replaced: Array<[string, string]> = [];

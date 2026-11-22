@@ -30,6 +30,8 @@ vi.mock('@xterm/xterm', () => ({
     onData = vi.fn(() => ({ dispose: vi.fn() }));
     attachCustomKeyEventHandler = vi.fn();
     focus = vi.fn();
+    options = {};
+    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
   },
 }));
 vi.mock('@xterm/addon-fit', () => ({
@@ -263,6 +265,65 @@ describe('WorkspaceScreen', () => {
     });
 
     await waitFor(() => expect(screen.getByTestId('workbench-tab-session:sess-w1')).toHaveTextContent('Fix the login bug'));
+  });
+
+  describe('external session tabs', () => {
+    const ext = {
+      id: 'ext1', harness: 'claude', cwd: '/repos/acme', label: 'acme', title: 'Fix CartService rounding', closed: false,
+      precision: 'measured', lastEventAt: 1, activity: 'idle', activitySince: 1, terminal: 'iTerm2',
+    };
+    const adopted = {
+      sessionId: 'sess-adopted', conversationId: 'ext1', anchor: { kind: 'workspace', workspaceId: 'w1' }, scopeId: 'w1',
+      cwd: '/repos/acme', label: 'Fix CartService rounding', status: 'running', outputBuffer: '', browserEnabled: false,
+    };
+    const routeExternal = (): void => {
+      (ipc.callIpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+        if (method === 'workspace.getActive') return projectWorkspace;
+        if (method === 'workspace.listDir') return [];
+        if (method === 'session.list') return [];
+        if (method === 'externalSession.state') return { consent: 'exact', hooksInstalled: {}, sessions: [ext] };
+        if (method === 'externalSession.tail') return JSON.stringify({ type: 'user', message: { content: 'Does the 100% coupon work?' } });
+        if (method === 'externalSession.assume') return adopted;
+        if (method === 'session.status') return adopted;
+        return undefined;
+      });
+    };
+
+    it('opens a read-only tab with no input, and "Assumir" turns that same tab into the live session', async () => {
+      const user = userEvent.setup();
+      routeExternal();
+      renderScreen();
+
+      await user.click(await screen.findByTestId('tree-external-session-ext1'));
+
+      const tab = await screen.findByTestId('workbench-tab-external:ext1');
+      expect(tab).toHaveAttribute('aria-pressed', 'true');
+      expect(tab).toHaveTextContent('Fix CartService rounding');
+      expect(await screen.findByText('Does the 100% coupon work?')).toBeInTheDocument();
+      expect(within(screen.getByTestId('external-session-panel')).queryByRole('textbox')).toBeNull();
+
+      const assume = screen.getByTestId('external-session-assume');
+      await waitFor(() => expect(assume).toBeEnabled());
+      await user.click(assume);
+
+      expect(await screen.findByTestId('workbench-tab-session:sess-adopted')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.queryByTestId('workbench-tab-external:ext1')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('external-session-panel')).not.toBeInTheDocument();
+    });
+
+    it('closing the tab leaves the external session untouched', async () => {
+      const user = userEvent.setup();
+      routeExternal();
+      renderScreen();
+      await user.click(await screen.findByTestId('tree-external-session-ext1'));
+      await screen.findByTestId('workbench-tab-external:ext1');
+
+      await user.click(screen.getByTestId('workbench-tab-close-external:ext1'));
+
+      expect(screen.queryByTestId('workbench-tab-external:ext1')).not.toBeInTheDocument();
+      expect(screen.getByTestId('tree-external-session-ext1')).toBeInTheDocument();
+      expect(ipc.callIpc).not.toHaveBeenCalledWith('externalSession.assume', expect.anything());
+    });
   });
 
   describe('browser tabs', () => {
@@ -649,15 +710,47 @@ describe('WorkspaceScreen', () => {
       expect(ipc.callIpc).toHaveBeenCalledWith('terminal.create', {});
     });
 
-    it('lists launch configurations in the + menu and runs one as a terminal tab', async () => {
+    it('opens the launch picker from the + menu and runs a config as a terminal tab', async () => {
       const user = userEvent.setup();
       mockIpc({ 'launchConfig.run': { ...shell, kind: 'launch', name: 'Run server' } });
       renderScreen();
       await user.click(await screen.findByTestId('explorer-view-terminals'));
       await user.click(await screen.findByTestId('terminals-new-menu'));
-      await user.click(await screen.findByTestId('terminals-menu-launch-Run server'));
+      await user.click(await screen.findByTestId('terminals-menu-open-launch-picker'));
+      expect(await screen.findByTestId('launch-picker')).toBeInTheDocument();
+      await user.click(await screen.findByTestId('launch-picker-row-root-Run server'));
       expect(await screen.findByTestId('workbench-tab-terminal:t1')).toBeInTheDocument();
       expect(ipc.callIpc).toHaveBeenCalledWith('launchConfig.run', { configName: 'Run server' });
+    });
+
+    it('multi-folder: "Editar launch.json" opens the file of the highlighted row folder', async () => {
+      const user = userEvent.setup();
+      const multi = { ...projectWorkspace, extraFolders: ['/repos/api'] };
+      (ipc.callIpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+        if (method === 'workspace.getActive') return multi;
+        if (method === 'workspace.listDir') return [];
+        if (method === 'launchConfig.list') return { workspaceId: 'w1', configs: [launchConfig] };
+        if (method === 'terminal.list') return [];
+        return undefined;
+      });
+      renderScreen();
+      await user.click(await screen.findByTestId('explorer-view-terminals'));
+      await user.click(await screen.findByTestId('terminals-new-menu'));
+      await user.click(await screen.findByTestId('terminals-menu-open-launch-picker'));
+      await user.type(await screen.findByTestId('launch-picker-search'), 'api');
+      await screen.findByTestId('launch-picker-row-api-Run server');
+      await user.click(screen.getByTestId('launch-picker-edit'));
+      expect(await screen.findByTestId('workbench-tab-file:api/.vscode/launch.json')).toBeInTheDocument();
+    });
+
+    it('single-folder: "Editar launch.json" keeps the bare .vscode path', async () => {
+      const user = userEvent.setup();
+      mockIpc();
+      renderScreen();
+      await user.click(await screen.findByTestId('explorer-view-terminals'));
+      await user.click(await screen.findByTestId('terminals-new-menu'));
+      await user.click(await screen.findByTestId('terminals-menu-edit-launch'));
+      expect(await screen.findByTestId('workbench-tab-file:.vscode/launch.json')).toBeInTheDocument();
     });
 
     it('closing the tab does not stop the terminal — the row stays, marked "sem aba"', async () => {
@@ -1027,7 +1120,7 @@ describe('WorkspaceScreen', () => {
       expect(ipc.callIpc).not.toHaveBeenCalledWith('session.spawn', expect.anything());
     });
 
-    it('opening a running session of another scope switches to that scope first, then opens its tab', async () => {
+    it('opening a running session of another scope opens its tab here, without switching scope and labelled with its origin', async () => {
       const user = userEvent.setup();
       (ipc.callIpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
         if (method === 'workspace.getActive') return projectWorkspace;
@@ -1039,8 +1132,34 @@ describe('WorkspaceScreen', () => {
       });
       renderScreen();
       await user.click(await screen.findByTestId('tree-session-personal'));
-      await waitFor(() => expect(ipc.callIpc).toHaveBeenCalledWith('workspace.goHome', {}));
-      expect(await screen.findByTestId('workbench-tab-session:personal')).toBeInTheDocument();
+      const tab = await screen.findByTestId('workbench-tab-session:personal');
+      expect(tab).toHaveTextContent('Início');
+      expect(ipc.callIpc).not.toHaveBeenCalledWith('workspace.goHome', {});
+      expect(ipc.callIpc).not.toHaveBeenCalledWith('workspace.switchTo', expect.anything());
+    });
+
+    it('never saves a foreign session tab with the active scope\'s open editors', async () => {
+      const user = userEvent.setup();
+      (ipc.callIpc as ReturnType<typeof vi.fn>).mockImplementation(async (method: string) => {
+        if (method === 'workspace.getActive') return projectWorkspace;
+        if (method === 'workspace.listDir') return [];
+        if (method === 'session.list') {
+          return [
+            { sessionId: 'personal', anchor: { kind: 'personal' }, scopeId: null, cwd: '/home/u', label: 'Início', status: 'running', harness: 'claude', conversationId: 'c-home' },
+            { sessionId: 'workspace:w1', anchor: { kind: 'workspace', workspaceId: 'w1' }, scopeId: 'w1', cwd: '/repos/acme', label: 'Acme', status: 'running', harness: 'claude', conversationId: 'c-w1' },
+          ];
+        }
+        return undefined;
+      });
+      renderScreen();
+      await user.click(await screen.findByTestId('tree-session-personal'));
+      await user.click(await screen.findByTestId('tree-session-workspace:w1'));
+      await screen.findByTestId('workbench-tab-session:workspace:w1');
+      await waitFor(() => {
+        const saves = (ipc.callIpc as ReturnType<typeof vi.fn>).mock.calls.filter(([m]) => m === 'openEditors.save');
+        const last = saves.at(-1)?.[1] as { tabs: Array<{ id: string }> } | undefined;
+        expect(last?.tabs.map((t) => t.id)).toEqual(['session:workspace:w1']);
+      });
     });
 
     it('clicking an exited session in the tree resumes it via session.resume and opens its Workbench tab', async () => {

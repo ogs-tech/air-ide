@@ -27,8 +27,10 @@ npx playwright test --grep @smoke        # only the main journey of each area
 |---|---|---|
 | `sessions` | lifecycle, tabs, session list, history, channel picker | permission requests, workspace edits, conversations started outside the app (CLI hooks; tagged `@integration`) |
 | `channels` | setup and terminals, Cursor, LM Studio | — |
-| `customizations` | browse and search, create and edit, home scope, integrations, plugin import, channel warnings, panel chrome, language instruction | sync to Claude |
+| `customizations` | browse and search, create and edit, home scope, integrations, plugin import, channel warnings, language instruction, save errors | sync to Claude |
 | `workspaces` | first use | layout |
 | `editor` | spreadsheet preview | — |
+| `shell` | one spec per container: header, explorer panel, workbench panel, control panel (was `customizations/panel-chrome`), footer | — |
+| `source-control` | git: stage, commit, init, and the failures a person can hit offline (refusing hook, no remote) | — |
 
 `e2e/fixtures/` holds the shared launch, CLI stubs, layout checker and `sessions-app.ts`.

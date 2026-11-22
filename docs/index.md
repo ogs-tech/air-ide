@@ -36,6 +36,12 @@ A workspace is a folder, or a group of folders, the app works in. Home (Início)
 - [Manage workspaces](product/workspaces/how-to/manage-workspaces.md) — create, switch, rename and remove workspaces; what a workspace inherits from Global.
 - [Work with multi-folder workspaces](product/workspaces/how-to/work-with-multi-folder-workspaces.md) — several repositories in one workspace, per-folder customizations, which folders a session sees.
 
+### [The app window](product/shell/index.md)
+
+Header, Explorer panel, Workbench, Control panel and footer: what each container holds and how to hide the side panels.
+
+- [The five containers](product/shell/reference/containers.md) — contents, behaviour and the e2e spec for each.
+
 ### [Editor and explorer](product/editor/index.md)
 
 Read, edit and review files inside the app.

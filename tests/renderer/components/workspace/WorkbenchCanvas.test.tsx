@@ -35,6 +35,7 @@ describe('WorkbenchCanvas "+" menu', () => {
 describe('WorkbenchCanvas session tabs', () => {
   const sessionTab = (over: Partial<Parameters<typeof WorkbenchCanvas>[0]['tabs'][number]> = {}): Parameters<typeof WorkbenchCanvas>[0]['tabs'][number] => ({
     id: 's1',
+    kind: 'session',
     label: 'refactor-auth',
     glyph: SquareTerminal,
     render: () => null,
@@ -91,9 +92,24 @@ describe('WorkbenchCanvas session tabs', () => {
       }
     });
 
-    it('hides "all tabs" when nothing overflows', () => {
-      renderWithTheme(<WorkbenchCanvas tabs={tabs} activeTabId="a" onSelect={vi.fn()} />);
+    const idleTabs = [sessionTab({ id: 'a', label: 'alpha', sessionState: 'idle' }), sessionTab({ id: 'b', label: 'beta', sessionState: 'idle' })];
+
+    it('hides "all tabs" when nothing overflows and nothing needs input', () => {
+      renderWithTheme(<WorkbenchCanvas tabs={idleTabs} activeTabId="a" onSelect={vi.fn()} />);
       expect(screen.queryByTestId('workbench-all-tabs')).toBeNull();
+    });
+
+    it('shows "all tabs" with an amber count when a session needs input, and opens pre-filtered', async () => {
+      const onSelect = vi.fn();
+      const withInput = [sessionTab({ id: 'a', label: 'alpha', sessionState: 'idle' }), sessionTab({ id: 'b', label: 'beta', sessionState: 'needs-input' })];
+      renderWithTheme(<WorkbenchCanvas tabs={withInput} activeTabId="a" onSelect={onSelect} />);
+      expect(screen.getByTestId('workbench-all-tabs-needs-input')).toHaveTextContent('1');
+      await userEvent.click(screen.getByTestId('workbench-all-tabs'));
+      expect(await screen.findByTestId('workbench-all-tabs-b')).toBeInTheDocument();
+      expect(screen.queryByTestId('workbench-all-tabs-a')).toBeNull();
+      await userEvent.click(screen.getByTestId('workbench-all-tabs-b'));
+      expect(onSelect).toHaveBeenCalledWith('b');
+      expect(screen.queryByTestId('workbench-switcher')).toBeNull();
     });
   });
 });

@@ -3,7 +3,7 @@ import type { ChannelId } from '../../../shared/channel.js';
 import {
   EXTERNAL_SCAN_HIDDEN_MS,
   EXTERNAL_SCAN_VISIBLE_MS,
-  EXTERNAL_TAIL_BYTES,
+  EXTERNAL_VIEW_BYTES,
   EXTERNAL_WORKING_WINDOW_MS,
   type ExternalSession,
 } from '../../../shared/external-session.js';
@@ -84,7 +84,7 @@ export class ExternalSessionService {
   }
 
   tail(id: string): Promise<string> {
-    return this.deps.transcripts.tail(id, EXTERNAL_TAIL_BYTES);
+    return this.deps.transcripts.tail(id, EXTERNAL_VIEW_BYTES);
   }
 
   /** Runs one process scan now (also what the timer does). */

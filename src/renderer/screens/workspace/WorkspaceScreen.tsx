@@ -1,3 +1,4 @@
+import { sessionTabLabel } from '../../lib/session-tab-label.js';
 import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
 import { useQueryClient } from '@tanstack/react-query';
@@ -24,13 +25,15 @@ import { ExplorerPanelContent } from '../../components/workspace/ExplorerPanelCo
 import type { RailItem } from '../../components/workspace/ExplorerRail.js';
 import type { ExplorerView } from '../../components/workspace/ExplorerRail.js';
 import { HomeOverview } from '../../components/workspace/overview/HomeOverview.js';
+import { LaunchPicker } from '../../components/workspace/LaunchPicker.js';
 import { WorkspaceOverview } from '../../components/workspace/overview/WorkspaceOverview.js';
 import { DiffView } from '../../components/workspace/git/DiffView.js';
 import type { GitDiffSource } from '../../../shared/git.js';
 import { ControlPanelContent } from '../../components/workspace/ControlPanelContent.js';
 import { SessionHistoryTab } from '../history/SessionHistoryTab.js';
 import type { HistoryScope } from '../../../shared/session-history.js';
-import { WorkbenchCanvas, type WorkbenchTab } from '../../components/workspace/WorkbenchCanvas.js';
+import { WorkbenchCanvas } from '../../components/workspace/WorkbenchCanvas.js';
+import type { WorkbenchTab } from '../../components/workspace/workbench-tab.js';
 import { EditorPanel, type EditorHiddenField } from '../../components/workspace/EditorPanel.js';
 import { SessionPanel } from '../../components/SessionPanel.js';
 import { TerminalsSection } from '../../components/workspace/TerminalsSection.js';
@@ -70,11 +73,14 @@ import {
 } from '../../lib/browser-tabs-store.js';
 import { seedFolderInstruction, seedWorkspaceInstruction } from '../../lib/instruction-seed.js';
 import { entityBody } from '../../lib/entity-body.js';
-import { useActiveWorkspace, useGoHome, useOpenWorkspace, useSwitchWorkspace } from '../../hooks/use-workspaces.js';
+import { useActiveWorkspace, useGoHome, useOpenWorkspace, useSwitchWorkspace, useWorkspaces } from '../../hooks/use-workspaces.js';
 import { useInvalidateCustomization } from '../../hooks/use-customization-list.js';
-import { requestObserve } from '../../lib/external-observe-store.js';
+import { registerOpenExternal, requestOpenExternal } from '../../lib/external-open-store.js';
+import { useExternalSessions } from '../../hooks/use-external-sessions.js';
+import { ExternalSessionPanel } from '../../components/workspace/ExternalSessionPanel.js';
+import { externalStateOf } from '../../components/workspace/ExternalSessionsBlock.js';
 import { SessionFileBanner } from '../../components/workspace/SessionFileBanner.js';
-import { rowStateOf, sessionStateDetail } from '../../lib/session-attention.js';
+import { rowStateOf, sessionStateDetail, UNTITLED_LABEL } from '../../lib/session-attention.js';
 import { defaultHistoryFilters } from '../../lib/history-period.js';
 import { useSessionHistory } from '../../hooks/use-session-history.js';
 import { useSessions, sessionsQueryKey } from '../../hooks/use-sessions.js';
@@ -107,7 +113,7 @@ import { registerExternalFileOpener, registerFileOpener } from '../../lib/file-o
 import { revealInEditor, type RevealTarget } from '../../lib/editor-navigation.js';
 import { noteRecentFile } from '../../lib/recent-files-store.js';
 import { Copy, FolderSearch, Plus, History as HistoryGlyph, Pin, PinOff, X as XGlyph } from 'lucide-react';
-import { restoreTabs, toPersisted, type EntityKind, type OpenTab, type RestoreContext } from './open-tabs.js';
+import { isForeignSessionTab, restoreTabs, toPersisted, type EntityKind, type OpenTab, type RestoreContext } from './open-tabs.js';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -187,12 +193,14 @@ export function WorkspaceScreen(): React.ReactElement {
   // `null` = Início (Global, no workspace open); `undefined` while loading.
   const { data: activeWorkspace } = useActiveWorkspace();
   const isHome = activeWorkspace === null;
+  const activeScopeId = activeWorkspace?.id ?? null;
   const switchWorkspace = useSwitchWorkspace();
   const openWorkspace = useOpenWorkspace();
   const goHomeMutation = useGoHome();
   const invalidateCustomization = useInvalidateCustomization();
   const invalidateInstructions = useInvalidateInstructions();
   const { data: sessions } = useSessions();
+  const { data: allWorkspaces } = useWorkspaces();
   const { data: terminals } = useTerminals(activeWorkspace != null);
   const createTerminal = useCreateTerminal();
   const folderRouting = useFolderRouting();
@@ -277,20 +285,58 @@ export function WorkspaceScreen(): React.ReactElement {
   // workspace/personal anchor with several coexisting sessions gets one tab
   // per session — the caller always already has this id in hand, from a
   // spawn/resume response or an existing SessionSnapshot row.
-  const openSessionTab = (session: Pick<SessionSnapshot, 'sessionId' | 'anchor' | 'label'>): void => {
+  const openSessionTab = (session: SessionOpenTarget): void => {
     const id = `session:${session.sessionId}`;
     setOpenTabs((prev) =>
       prev.some((t) => t.id === id)
         ? prev
-        : [...prev, { id, kind: 'session', anchor: session.anchor, sessionId: session.sessionId, label: session.label }],
+        : [
+            ...prev,
+            {
+              id,
+              kind: 'session',
+              anchor: session.anchor,
+              sessionId: session.sessionId,
+              label: session.label,
+              ...(session.scopeId !== undefined ? { scopeId: session.scopeId } : {}),
+            },
+          ],
     );
     setActiveTabId(id);
   };
 
-  // A clicked notification: bring up that session's tab, or the read-only view of an external one.
+  // An external conversation opens as its own read-only tab, keyed by the harness's conversation id.
+  const openExternalTab = (externalId: string): void => {
+    const id = `external:${externalId}`;
+    setOpenTabs((prev) => (prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'external-session', externalId }]));
+    setActiveTabId(id);
+  };
+
+  // "Assumir": the conversation now runs here, so its read-only tab becomes the real session's, in the same slot.
+  const assumeExternalTab = (externalTabId: string, session: SessionOpenTarget): void => {
+    const id = `session:${session.sessionId}`;
+    const tab = {
+      id,
+      kind: 'session' as const,
+      anchor: session.anchor,
+      sessionId: session.sessionId,
+      label: session.label,
+      ...(session.scopeId !== undefined ? { scopeId: session.scopeId } : {}),
+    };
+    setOpenTabs((prev) => prev.filter((t) => t.id !== id).map((t) => (t.id === externalTabId ? tab : t)));
+    setActiveTabId(id);
+    void queryClient.invalidateQueries({ queryKey: sessionsQueryKey });
+  };
+
+  // Rows in the sessions list and clicked notifications ask through a registry; this is where the ask becomes a tab.
+  const onOpenExternalRequest = useEffectEvent((externalId: string): void => openExternalTab(externalId));
+  useEffect(() => registerOpenExternal((externalId) => onOpenExternalRequest(externalId)), []);
+  const { data: externalState } = useExternalSessions();
+
+  // A clicked notification: bring up that session's tab, or the tab of an external one.
   const onNotificationOpen = useEffectEvent((target: { id: string; external: boolean }): void => {
     if (target.external) {
-      requestObserve(target.id);
+      requestOpenExternal(target.id);
       return;
     }
     const session = sessions?.find((s) => s.sessionId === target.id);
@@ -327,7 +373,8 @@ export function WorkspaceScreen(): React.ReactElement {
     setActiveTabId(id);
   };
 
-  const onEditLaunchJson = (): void => openFileTab('.vscode/launch.json');
+  const [launchPickerOpen, setLaunchPickerOpen] = useState(false);
+  const onEditLaunchJson = (folder?: string): void => openFileTab(folderRouting.join(folder, '.vscode/launch.json'));
 
   const openTerminalIn = (relPath: string): void => {
     const { folder, rel } = folderRouting.split(relPath);
@@ -436,7 +483,7 @@ export function WorkspaceScreen(): React.ReactElement {
   // dot and the discard guards below stay simple boolean bookkeeping. Preview
   // tabs are read-only and never report dirty, same as session tabs.
   const setTabDirty = (id: string, dirty: boolean): void =>
-    setOpenTabs((prev) => prev.map((t) => (t.id === id && t.kind !== 'session' && t.kind !== 'preview' ? { ...t, dirty } : t)));
+    setOpenTabs((prev) => prev.map((t) => (t.id === id && t.kind !== 'session' && t.kind !== 'external-session' && t.kind !== 'preview' ? { ...t, dirty } : t)));
 
   // Restores the tabs this workspace (or Início) had open before a reload, then
   // keeps them saved. `hydratedKey` gates saving: until the saved list has
@@ -475,17 +522,19 @@ export function WorkspaceScreen(): React.ReactElement {
 
   useEffect(() => {
     if (workspaceKey === undefined || hydratedKey !== workspaceKey) return;
+    // Foreign session tabs follow the user across switches; they never belong to this scope's saved list.
+    const ownTabs = openTabs.filter((t) => !isForeignSessionTab(t, activeScopeId));
     if (skipSaveRef.current) {
-      if (openTabs.length === 0) return;
+      if (ownTabs.length === 0) return;
       skipSaveRef.current = false;
     }
     const timer = setTimeout(() => {
-      callIpc('openEditors.save', { tabs: toPersisted(openTabs), activeTabId }).catch((err: unknown) =>
+      callIpc('openEditors.save', { tabs: toPersisted(ownTabs), activeTabId }).catch((err: unknown) =>
         console.warn('Could not save the open editors', err),
       );
     }, 300);
     return () => clearTimeout(timer);
-  }, [openTabs, activeTabId, workspaceKey, hydratedKey]);
+  }, [openTabs, activeTabId, workspaceKey, hydratedKey, activeScopeId]);
 
   // Each mounted editor registers how to save itself (it owns its draft), so the
   // unsaved-changes dialog's Salvar / Salvar tudo and the menu's ⌘S can reach it.
@@ -653,7 +702,11 @@ export function WorkspaceScreen(): React.ReactElement {
     )
       return false;
     skipSaveRef.current = true;
-    setOpenTabs([]);
+    // A running session opened from another scope survives the switch; everything else belongs to the scope being left.
+    const stillRunning = new Set((sessions ?? []).filter((s) => s.status === 'running').map((s) => s.sessionId));
+    setOpenTabs((prev) =>
+      prev.filter((t) => isForeignSessionTab(t, activeScopeId) && t.kind === 'session' && stillRunning.has(t.sessionId)),
+    );
     setActiveTabId(OVERVIEW_TAB_ID);
     return true;
   };
@@ -891,23 +944,10 @@ export function WorkspaceScreen(): React.ReactElement {
     setActiveTabId(id);
   };
 
-  // A session keeps running when you leave its scope, so one listed from here
-  // may belong to another workspace (or Início): go there first — same discard
-  // guard as any switch — then open its tab. Its tab is saved with that scope's
-  // own editors, so it is restored there too.
-  const openSessionAnywhere = (session: SessionOpenTarget): void => {
-    const here = activeWorkspace?.id ?? null;
-    if (session.scopeId === undefined || session.scopeId === here) {
-      openSessionTab(session);
-      return;
-    }
-    const targetScope = session.scopeId;
-    void resetTabs().then((ok) => {
-      if (!ok) return;
-      const switched = targetScope === null ? goHomeMutation.mutateAsync() : switchWorkspace.mutateAsync(targetScope);
-      switched.then(() => openSessionTab(session)).catch(showError);
-    });
-  };
+  // A session keeps running whatever scope is open, so one listed from here may
+  // belong to another workspace (or Início). It opens as a tab right here — no
+  // switch, no discard guard — marked with its origin, and survives later switches.
+  const openSessionAnywhere = (session: SessionOpenTarget): void => openSessionTab(session);
 
   // The "+" in the Sessões panel header: always a fresh session (coexisting
   // with any already open for the same anchor) wherever the user currently is.
@@ -1050,6 +1090,7 @@ export function WorkspaceScreen(): React.ReactElement {
 
   const overviewTab: WorkbenchTab = {
     id: OVERVIEW_TAB_ID,
+    kind: 'overview',
     glyph: activeWorkspace ? Folder : House,
     label: 'Visão geral',
     iconOnly: true,
@@ -1064,6 +1105,7 @@ export function WorkspaceScreen(): React.ReactElement {
           onOpenSession={openSessionTab}
           onOpenInstruction={openInstructionTab}
           onOpenTerminal={openTerminalTab}
+          onOpenLaunchPicker={() => setLaunchPickerOpen(true)}
           onError={(message) => setToast({ variant: 'error', message })}
         />
       ) : (
@@ -1084,6 +1126,7 @@ export function WorkspaceScreen(): React.ReactElement {
       const icon = fileIconFor(name);
       return {
         id: tab.id,
+        kind: 'file',
         glyph: icon.glyph,
         glyphTone: icon.tone,
         label: tab.removed === true ? `${name} (removido)` : name,
@@ -1116,6 +1159,7 @@ export function WorkspaceScreen(): React.ReactElement {
       const name = tab.path.slice(tab.path.lastIndexOf('/') + 1);
       return {
         id: tab.id,
+        kind: 'git-diff',
         glyph: GitCompare,
         label: `${name} ${tab.source.kind === 'index' ? '(stage)' : '(alterações)'}`,
         breadcrumb: tab.path,
@@ -1129,6 +1173,7 @@ export function WorkspaceScreen(): React.ReactElement {
     if (tab.kind === 'history') {
       return {
         id: tab.id,
+        kind: 'history',
         glyph: History,
         label: 'Histórico',
         dense: true,
@@ -1139,6 +1184,7 @@ export function WorkspaceScreen(): React.ReactElement {
     if (tab.kind === 'preview') {
       return {
         id: tab.id,
+        kind: 'preview',
         glyph: Eye,
         label: tab.label,
         dense: true,
@@ -1160,6 +1206,7 @@ export function WorkspaceScreen(): React.ReactElement {
         );
       return {
         id: tab.id,
+        kind: 'config',
         glyph: areaDef?.glyph ?? Eye,
         label: areaDef?.label ?? tab.kind,
         dense: true,
@@ -1171,6 +1218,7 @@ export function WorkspaceScreen(): React.ReactElement {
       const pageDef = findConfigPage(tab.page);
       return {
         id: tab.id,
+        kind: 'config',
         glyph: pageDef?.glyph ?? Eye,
         label: pageDef?.label ?? 'Configurações',
         breadcrumb: `Configurações › ${pageDef?.label ?? tab.page}`,
@@ -1182,6 +1230,7 @@ export function WorkspaceScreen(): React.ReactElement {
     if (tab.kind === 'mcp') {
       return {
         id: tab.id,
+        kind: 'mcp',
         glyph: Plug,
         label: tab.label,
         breadcrumb: `MCP › ${tab.label}`,
@@ -1197,6 +1246,7 @@ export function WorkspaceScreen(): React.ReactElement {
       const liveTab = browserTabs.find((t) => t.tabId === tab.tabId);
       return {
         id: tab.id,
+        kind: 'browser',
         glyph: Globe,
         label: liveTab?.url || 'Nova aba',
         dense: true,
@@ -1208,6 +1258,12 @@ export function WorkspaceScreen(): React.ReactElement {
       };
     }
     if (tab.kind === 'session') {
+      // A tab from another scope says where it lives, so it is never mistaken for a local one.
+      const withOrigin = (label: string): string => {
+        if (!isForeignSessionTab(tab, activeScopeId)) return label;
+        const origin = tab.scopeId == null ? 'Início' : (allWorkspaces?.find((w) => w.id === tab.scopeId)?.name ?? 'outro workspace');
+        return `${label} · ${origin}`;
+      };
       // The session itself keeps running server-side regardless of this
       // tab's fate (see `openTabs`' own comment) — closing it while its
       // process is still 'running' is a minimize, not a real close, so the
@@ -1218,17 +1274,19 @@ export function WorkspaceScreen(): React.ReactElement {
       const tabDetail = tabSession ? sessionStateDetail(tabSession) : undefined;
       return {
         id: tab.id,
+        kind: 'session',
         ...(tabSession ? { sessionState: rowStateOf(tabSession) } : {}),
         ...(tabHarness ? { sessionChannel: tabHarness } : {}),
         ...(tabDetail ? { sessionDetail: tabDetail } : {}),
         glyph: tabHarness ? harnessGlyph(tabHarness) : SquareTerminal,
         // The CLI names a workspace/Início conversation after the tab opened; entity-anchored ones keep their anchor's name.
-        label:
-          (tabSession && (tabSession.anchor.kind === 'workspace' || tabSession.anchor.kind === 'personal')
+        label: withOrigin(sessionTabLabel([
+          tabSession && (tabSession.anchor.kind === 'workspace' || tabSession.anchor.kind === 'personal')
             ? titleByConversation.get(tabSession.conversationId)
-            : undefined) ??
-          tabSession?.label ??
+            : undefined,
+          tabSession?.label,
           tab.label,
+        ])),
         closeLabel: running ? 'Minimizar' : 'Fechar',
         // Manages its own edge-to-edge spacing (padding only around the
         // header, none around the terminal itself) — the canvas's own p:2
@@ -1239,11 +1297,28 @@ export function WorkspaceScreen(): React.ReactElement {
         render: (hidden) => <SessionPanel anchor={tab.anchor} sessionId={tab.sessionId} visible={!hidden} />,
       };
     }
+    if (tab.kind === 'external-session') {
+      const external = externalState?.sessions.find((s) => s.id === tab.externalId);
+      const channel = external?.harness ?? 'claude';
+      return {
+        id: tab.id,
+        kind: 'session',
+        sessionState: external ? externalStateOf(external) : 'exited',
+        sessionChannel: channel,
+        glyph: harnessGlyph(channel),
+        label: external?.title ?? UNTITLED_LABEL,
+        closeLabel: 'Fechar',
+        dense: true,
+        onClose: () => closeTab(tab.id),
+        render: () => <ExternalSessionPanel externalId={tab.externalId} onAssumed={(session) => assumeExternalTab(tab.id, session)} />,
+      };
+    }
     if (tab.kind === 'terminal') {
       const terminal = terminals?.find((t) => t.terminalId === tab.terminalId);
       const dot = terminal?.status === 'exited' && terminal.exitCode === 0 ? '○' : '●';
       return {
         id: tab.id,
+        kind: 'terminal',
         glyph: SquareTerminal,
         label: terminal ? `${dot} ${terminal.name} · ${terminal.relCwd === '' ? 'raiz' : terminal.relCwd}` : 'terminal',
         // The process outlives the tab either way; the label says so.
@@ -1277,6 +1352,7 @@ export function WorkspaceScreen(): React.ReactElement {
           : `${tab.kind === 'skill' ? 'Skills' : 'Agents'} › ${tab.entity.name || 'Novo'}`;
     return {
       id: tab.id,
+      kind: tab.kind,
       glyph: entityTabGlyph(tab),
       label: tab.entity.name || (tab.isCreate ? 'Novo' : tab.entity.name),
       breadcrumb,
@@ -1336,6 +1412,7 @@ export function WorkspaceScreen(): React.ReactElement {
       onOpen={openTerminalTab}
       onRemoved={(terminalId) => closeTab(`terminal:${terminalId}`)}
       onEditLaunchJson={onEditLaunchJson}
+      onOpenLaunchPicker={() => setLaunchPickerOpen(true)}
       onError={(message) => setToast({ variant: 'error', message })}
       fill
     />
@@ -1636,6 +1713,15 @@ export function WorkspaceScreen(): React.ReactElement {
           );
         }}
       />
+      {activeWorkspace && (
+        <LaunchPicker
+          open={launchPickerOpen}
+          onClose={() => setLaunchPickerOpen(false)}
+          onOpenTerminal={openTerminalTab}
+          onEditLaunchJson={onEditLaunchJson}
+          onError={(message) => setToast({ variant: 'error', message })}
+        />
+      )}
       <Toast toast={toast} onDismiss={() => setToast(null)} />
     </Box>
   );

@@ -20,6 +20,7 @@ const answer = (answers: Record<string, unknown>) =>
   call.mockImplementation(async (method: string) => ok(method in answers ? answers[method] : undefined));
 
 beforeEach(() => {
+  localStorage.clear();
   call = mockApi();
 });
 
@@ -106,8 +107,8 @@ describe('WorkspaceOverview', () => {
         onOpenSession={vi.fn()}
         onOpenInstruction={vi.fn()}
         onOpenTerminal={vi.fn()}
+        onOpenLaunchPicker={vi.fn()}
         onError={vi.fn()}
-       
         {...props}
       />,
     );
@@ -170,24 +171,70 @@ describe('WorkspaceOverview', () => {
     expect(onOpenInstruction).toHaveBeenCalledWith(expect.objectContaining({ scopes: ['workspace'], scopeId: 'w1' }), true);
   });
 
+  const sup = (name: string) => ({ name, type: 'node', request: 'launch', program: 'x', args: [], supported: true });
+  const answerLaunch = (opts: { workspace?: Workspace; lists: Record<string, unknown>; terminals?: unknown[]; run?: unknown }) =>
+    call.mockImplementation(async (method: string, params?: { folder?: string }) => {
+      if (method === 'workspace.getActive') return ok(opts.workspace ?? ACME);
+      if (method === 'launchConfig.list') return ok(opts.lists[params?.folder ?? ACME.rootPath] ?? null);
+      if (method === 'terminal.list') return ok(opts.terminals ?? []);
+      if (method === 'launchConfig.run') return ok(opts.run);
+      return ok(undefined);
+    });
+
   it('runs a supported launch config and opens its terminal', async () => {
     const user = userEvent.setup();
     const onOpenTerminal = vi.fn();
     const terminal = { terminalId: 'p1', workspaceId: 'w1', kind: 'launch', name: 'dev', relCwd: '', status: 'running', exitCode: null, generation: 0 };
-    answer({
-      'launchConfig.list': {
-        workspaceId: 'w1',
-        configs: [
-          { name: 'dev', type: 'node', request: 'launch', program: 'x', args: [], supported: true },
-          { name: 'web', type: 'chrome', request: 'launch', program: '', args: [], supported: false },
-        ],
-      },
-      'launchConfig.run': terminal,
+    answerLaunch({
+      lists: { '/repos/acme': { workspaceId: 'w1', configs: [sup('dev'), { ...sup('web'), type: 'chrome', supported: false }] } },
+      run: terminal,
     });
     renderWorkspace({ onOpenTerminal });
     await user.click(await screen.findByTestId('overview-launch-run-dev'));
     await waitFor(() => expect(onOpenTerminal).toHaveBeenCalledWith(terminal));
+    expect(call).toHaveBeenCalledWith('launchConfig.run', { configName: 'dev' });
     expect(screen.queryByTestId('overview-launch-run-web')).not.toBeInTheDocument();
+  });
+
+  it('caps the card at 5 and links to the picker; running and recent configs make the cut', async () => {
+    const user = userEvent.setup();
+    const onOpenLaunchPicker = vi.fn();
+    localStorage.setItem('launch-recents:w1', JSON.stringify([{ folder: '/repos/acme', name: 'c6' }]));
+    answerLaunch({
+      lists: { '/repos/acme': { workspaceId: 'w1', configs: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7'].map(sup) } },
+      terminals: [{ terminalId: 't', workspaceId: 'w1', kind: 'launch', name: 'c7', folder: '/repos/acme', relCwd: '', status: 'running', exitCode: null, generation: 0 }],
+    });
+    renderWorkspace({ onOpenLaunchPicker });
+    const see = await screen.findByTestId('overview-launch-see-all');
+    expect(see).toHaveTextContent('Ver todas (7)…');
+    const rows = screen.getAllByTestId(/^overview-launch-c\d$/);
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toHaveAttribute('data-testid', 'overview-launch-c7');
+    expect(rows[1]).toHaveAttribute('data-testid', 'overview-launch-c6');
+    await user.click(see);
+    expect(onOpenLaunchPicker).toHaveBeenCalled();
+  });
+
+  it('has no "Ver todas" with 5 configs or fewer', async () => {
+    answerLaunch({ lists: { '/repos/acme': { workspaceId: 'w1', configs: ['a', 'b', 'c', 'd', 'e'].map(sup) } } });
+    renderWorkspace();
+    await screen.findByTestId('overview-launch-a');
+    expect(screen.queryByTestId('overview-launch-see-all')).not.toBeInTheDocument();
+  });
+
+  it('multi-folder: rows carry the folder tag and the run sends the folder', async () => {
+    const user = userEvent.setup();
+    const multi: Workspace = { ...ACME, extraFolders: ['/repos/api'] };
+    answerLaunch({
+      workspace: multi,
+      lists: { '/repos/acme': { workspaceId: 'w1', configs: [sup('dev')] }, '/repos/api': { workspaceId: 'w1', configs: [sup('dev')] } },
+      run: { terminalId: 'p', workspaceId: 'w1', kind: 'launch', name: 'dev', folder: '/repos/api', relCwd: '', status: 'running', exitCode: null, generation: 0 },
+    });
+    renderWorkspace({ workspace: multi });
+    const row = await screen.findByTestId('overview-launch-dev-api');
+    expect(row).toHaveTextContent('api');
+    await user.click(screen.getByTestId('overview-launch-run-dev-api'));
+    await waitFor(() => expect(call).toHaveBeenCalledWith('launchConfig.run', { configName: 'dev', folder: '/repos/api' }));
   });
 
   it('hides the Launch card when there are no configs', async () => {

@@ -86,7 +86,7 @@ export function seedGitWorkspace(root: string): void {
 /** Registers `root` as the (only) workspace in `~/.air-ide/workspaces.json`; `open` makes it the active one at launch. */
 export function seedWorkspaceRegistry(
   home: string,
-  workspaces: Array<{ id: string; name: string; rootPath: string }>,
+  workspaces: Array<{ id: string; name: string; rootPath: string; extraFolders?: string[] }>,
   activeId: string | null,
 ): void {
   writeFile(

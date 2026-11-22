@@ -14,7 +14,12 @@ export type OpenTab =
   | { id: string; kind: 'file'; relPath: string; dirty?: boolean; pinned?: boolean; removed?: boolean; external?: boolean }
   | { id: string; kind: EntityKind; entity: Skill | Agent; isCreate: boolean; dirty?: boolean }
   | { id: string; kind: 'instruction'; entity: Instruction; isCreate: boolean; dirty?: boolean }
-  | { id: string; kind: 'session'; anchor: SessionAnchor; sessionId: string; label: string }
+  // `scopeId`: the scope that owns the session (`null` = Início), known when it was opened from the list.
+  // A session tab whose scope is not the active one is "foreign": it follows the user across switches
+  // and is never saved with the active scope's tabs.
+  | { id: string; kind: 'session'; anchor: SessionAnchor; sessionId: string; label: string; scopeId?: string | null }
+  // A conversation running outside the app, read-only until assumed. Not persisted: it lives and dies with the external process list.
+  | { id: string; kind: 'external-session'; externalId: string }
   | { id: string; kind: 'terminal'; terminalId: string }
   | { id: string; kind: 'preview'; label: string; source: PreviewSource }
   | { id: string; kind: 'history' }
@@ -31,6 +36,11 @@ export interface RestoreContext {
   terminalIds: ReadonlySet<string>;
   sessionIds: ReadonlySet<string>;
   fileExists: (relPath: string) => Promise<boolean>;
+}
+
+/** A session tab opened from another scope than `activeScopeId` (`null` = Início). */
+export function isForeignSessionTab(tab: OpenTab, activeScopeId: string | null): boolean {
+  return tab.kind === 'session' && tab.scopeId !== undefined && tab.scopeId !== activeScopeId;
 }
 
 /** The references worth keeping; see `PersistedTab` for what is deliberately left out. */
@@ -59,6 +69,7 @@ export function toPersisted(tabs: readonly OpenTab[]): PersistedTab[] {
       case 'browser':
         return []; // recovered from the main process by `reconcileBrowserTabs`
       case 'mcp':
+      case 'external-session':
         return [];
       default:
         return [{ id: tab.id, kind: 'area', area: tab.kind }];

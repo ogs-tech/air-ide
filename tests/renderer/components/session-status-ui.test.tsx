@@ -8,6 +8,7 @@ import { ExternalConsentBanner, ExternalSessionRows } from '../../../src/rendere
 import { rateLimitText } from '../../../src/renderer/components/workspace/SessionRow.js';
 import type { ExternalSession } from '../../../src/shared/external-session.js';
 import type { SessionSnapshot } from '../../../src/shared/session.js';
+import { createAppTheme } from '../../../src/renderer/theme.js';
 import { mockApi, ok, renderWithQuery, renderWithTheme, type CallSpy } from '../test-utils.js';
 
 let call: CallSpy;
@@ -24,6 +25,34 @@ describe('ContextBar', () => {
     expect(screen.getByTestId('bar')).toHaveAttribute('data-level', 'warn');
     rerender(<ContextBar metrics={{ contextTokens: 190_000, contextWindow: 200_000 }} testId="bar" />);
     expect(screen.getByTestId('bar')).toHaveAttribute('data-level', 'danger');
+  });
+});
+
+describe('ContextBar value', () => {
+  it('prints the percentage beside the bar and follows it live, back to empty after /clear', () => {
+    const { rerender } = renderWithTheme(<ContextBar showValue metrics={{ contextTokens: 100_000, contextWindow: 200_000 }} testId="bar" />);
+    expect(screen.getByTestId('bar-value')).toHaveTextContent('50%');
+    rerender(<ContextBar showValue metrics={{ contextTokens: 150_000, contextWindow: 200_000 }} testId="bar" />);
+    expect(screen.getByTestId('bar-value')).toHaveTextContent('75%');
+    rerender(<ContextBar showValue metrics={undefined} testId="bar" />);
+    expect(screen.queryByTestId('bar-value')).toBeNull();
+  });
+
+  it('omits the value unless asked', () => {
+    renderWithTheme(<ContextBar metrics={{ contextTokens: 100_000, contextWindow: 200_000 }} testId="bar" />);
+    expect(screen.queryByTestId('bar-value')).toBeNull();
+  });
+});
+
+describe('ContextBar colours', () => {
+  it('draws the ok level in the theme disabled-text colour', () => {
+    renderWithTheme(<ContextBar metrics={{ contextTokens: 50_000, contextWindow: 200_000 }} testId="bar" />);
+    const fill = screen.getByTestId('bar').firstElementChild as HTMLElement;
+    const probe = document.createElement('span');
+    probe.style.color = createAppTheme('light').palette.text.disabled;
+    document.body.appendChild(probe);
+    expect(getComputedStyle(fill).backgroundColor).toBe(getComputedStyle(probe).color);
+    probe.remove();
   });
 });
 

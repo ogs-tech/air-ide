@@ -260,7 +260,7 @@ export function SessionRow({
             >
               {working && activityDetail ? activityDetail : state === 'idle' && metrics?.rateLimit ? rateLimitText(metrics.rateLimit, now) : (subtitle ?? harnessText)}
             </Typography>
-            <ContextBar metrics={metrics} testId={`${testId}-context`} />
+            <ContextBar metrics={metrics} showValue testId={`${testId}-context`} />
             <Typography
               component="span"
               noWrap

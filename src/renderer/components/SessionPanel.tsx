@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
-import { Box, Button, Stack, Typography, keyframes } from '@mui/material';
+import { Box, Button, Stack, Typography, keyframes, useTheme } from '@mui/material';
 import { useQueryClient } from '@tanstack/react-query';
 import { Lock } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
@@ -23,7 +23,7 @@ import {
   registerSessionTab,
 } from '../lib/browser-tabs-store.js';
 import { Toast, type ToastMessage } from './Toast.js';
-import { ogs, colorRoles } from '../tokens.js';
+import { oscColor, terminalTheme } from '../lib/terminal-theme.js';
 import { ContextBar } from './ContextBar.js';
 import { ChannelMark } from './ChannelMark.js';
 import { CHANNELS, type ChannelId } from '../../shared/channel.js';
@@ -58,7 +58,7 @@ interface SessionPanelProps {
 const STARTING_GRACE_MS = 5000;
 
 /** What the header says: the same four states as the list and the tabs, plus a failure that is not a session state. */
-interface HeaderStatus {
+export interface HeaderStatus {
   state: SessionRowState | 'error';
   label: string;
   /** Secondary text beside the label ("Edit · 12 s", "iniciando"). */
@@ -83,14 +83,6 @@ function headerStatusFor(status: PanelStatus, activity: SessionActivity | undefi
     }
   }
 }
-
-// A real terminal reads as its own environment, not as a themed app panel —
-// so this stays ink-on-cream regardless of the app's light/dark mode.
-const TERMINAL_XTERM_THEME = {
-  background: ogs.ink,
-  foreground: ogs.creamInk,
-  cursor: colorRoles.dark.azul,
-};
 
 /**
  * What `Shift+Enter` writes to the PTY in place of xterm's own `\r`.
@@ -167,12 +159,13 @@ interface SessionStatusLineProps {
 }
 
 /** Fixed height, so a state change or a late-arriving sessionId never moves the terminal above it. */
-const STATUS_LINE_HEIGHT = 24;
-const LINE_MUTED = 'rgba(242, 238, 229, 0.6)';
+const STATUS_LINE_HEIGHT = 28;
 
-/** One 24px line flush under the terminal, in the terminal's own colors: state, detail, context, cost, then the action on the right. */
-function SessionStatusLine({ status, detail, metrics, channel, action }: SessionStatusLineProps): React.ReactElement {
+/** One 28px line flush under the terminal, on the workbench footer tokens: state, detail, context, cost, then the action on the right. */
+export function SessionStatusLine({ status, detail, metrics, channel, action }: SessionStatusLineProps): React.ReactElement {
   const shownDetail = detail ?? status.detail;
+  const { workbench } = useTheme().ogs;
+  const muted = workbench.footerMuted;
   return (
     <Stack
       direction="row"
@@ -183,8 +176,10 @@ function SessionStatusLine({ status, detail, metrics, channel, action }: Session
         flex: 'none',
         alignItems: 'center',
         px: 1.25,
-        bgcolor: 'rgba(255, 255, 255, 0.06)',
-        color: ogs.creamInk,
+        bgcolor: workbench.footer,
+        color: 'text.primary',
+        borderTop: 1,
+        borderColor: 'divider',
         overflow: 'hidden',
         '& .MuiButton-root': { minHeight: 0, py: 0, lineHeight: '20px', fontSize: '0.75rem', color: 'inherit' },
       }}
@@ -206,7 +201,7 @@ function SessionStatusLine({ status, detail, metrics, channel, action }: Session
           data-testid="session-detail"
           sx={{
             fontSize: '0.75rem',
-            color: LINE_MUTED,
+            color: muted,
             minWidth: 0,
             '@media (prefers-reduced-motion: no-preference)': {
               animation: `${fadeIn} 0.2s ease-out`,
@@ -223,15 +218,15 @@ function SessionStatusLine({ status, detail, metrics, channel, action }: Session
             <ChannelMark harness={channel} size={12} />
             <Typography component="span" sx={{ fontSize: '0.75rem' }}>{CHANNELS[channel].displayName}</Typography>
             {metrics?.model && (
-              <Typography component="span" data-testid="session-model" sx={{ fontSize: '0.75rem', color: LINE_MUTED }}>
+              <Typography component="span" data-testid="session-model" sx={{ fontSize: '0.75rem', color: muted }}>
                 {`· ${formatModel(metrics.model)}`}
               </Typography>
             )}
           </Stack>
         )}
-        <ContextBar metrics={metrics} testId="session-context" onDark />
+        <ContextBar metrics={metrics} showValue testId="session-context" />
         {metrics?.costUsd !== undefined && (
-          <Typography component="span" data-testid="session-cost" sx={{ fontSize: '0.75rem', color: LINE_MUTED, flex: 'none' }}>
+          <Typography component="span" data-testid="session-cost" sx={{ fontSize: '0.75rem', color: muted, flex: 'none' }}>
             {`${channel === 'cursor' ? '~' : ''}US$ ${metrics.costUsd.toFixed(2)}`}
           </Typography>
         )}
@@ -260,6 +255,13 @@ export function SessionPanel({ anchor, sessionId: sessionIdProp, visible = true 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const mode = useTheme().palette.mode;
+  // Read through a ref so a light/dark flip never re-runs the creation effect (no remount, scrollback kept).
+  const modeRef = useRef(mode);
+  // Declared before the creation effect so the first mount already sees the current mode.
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   const queryClient = useQueryClient();
 
   const [sessionId, setSessionId] = useState<string | null>(sessionIdProp ?? null);
@@ -337,7 +339,7 @@ export function SessionPanel({ anchor, sessionId: sessionIdProp, visible = true 
     const terminal = new Terminal({
       convertEol: true,
       fontSize: 13,
-      theme: TERMINAL_XTERM_THEME,
+      theme: terminalTheme(modeRef.current),
       linkHandler: embeddedBrowserLinkHandler,
     });
     const fitAddon = new FitAddon();
@@ -374,6 +376,17 @@ export function SessionPanel({ anchor, sessionId: sessionIdProp, visible = true 
 
   useEffect(() => {
     if (!sessionId) return;
+    // Claude's "auto" theme asks the terminal for its colours (OSC 10/11) to pick light or dark output;
+    // answering with the live theme makes its mascot and diffs match the app instead of guessing.
+    const oscDisposables = [10, 11].map((code) =>
+      terminalRef.current?.parser.registerOscHandler(code, (payload) => {
+        if (payload !== '?') return false;
+        const theme = terminalTheme(modeRef.current);
+        const hex = (code === 10 ? theme.foreground : theme.background) ?? '';
+        void callIpc('session.write', { sessionId, data: `\x1b]${code};${oscColor(hex)}\x1b\\` });
+        return true;
+      }),
+    );
     const dataDisposable = terminalRef.current?.onData((data) => {
       void callIpc('session.write', { sessionId, data });
     });
@@ -402,12 +415,17 @@ export function SessionPanel({ anchor, sessionId: sessionIdProp, visible = true 
     });
     return () => {
       dataDisposable?.dispose();
+      for (const disposable of oscDisposables) disposable?.dispose();
       unsubOutput();
       unsubActivity();
       unsubExit();
       batcher.cancel();
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.theme = terminalTheme(mode);
+  }, [mode]);
 
   // Opening or switching to a session tab puts the keyboard in its terminal, as the Terminais panel does.
   useEffect(() => {
@@ -594,7 +612,7 @@ export function SessionPanel({ anchor, sessionId: sessionIdProp, visible = true 
         sx={{
           flexGrow: 1,
           minHeight: 0,
-          bgcolor: ogs.ink,
+          bgcolor: terminalTheme(mode).background,
           overflow: 'hidden',
         }}
       />

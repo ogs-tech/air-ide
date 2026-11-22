@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Box, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
-import { ChevronDown, ChevronRight, Folder, Play, Plus, RotateCw, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Folder, Plus, RotateCw, Square, X } from 'lucide-react';
 import { Icon } from '../ds/Icon.js';
 import { SectionAction, SectionHeader } from '../ds/ContainerChrome.js';
 import { FolderPickerDialog } from './FolderPickerDialog.js';
-import { useLaunchConfigs, useRunLaunchConfig } from '../../hooks/use-launch-configs.js';
+import { useAllLaunchConfigs } from '../../hooks/use-launch-configs.js';
 import {
   useCreateTerminal,
   useKillTerminal,
@@ -23,7 +23,10 @@ interface TerminalsSectionProps {
   onOpen: (terminal: TerminalSnapshot) => void;
   /** A removed terminal can no longer have a tab. */
   onRemoved: (terminalId: string) => void;
-  onEditLaunchJson: () => void;
+  /** Opens the `launch.json` of a folder; no folder = the primary one. */
+  onEditLaunchJson: (folder?: string) => void;
+  /** Opens the workspace-wide launch picker (hosted by the screen). */
+  onOpenLaunchPicker: () => void;
   onError: (message: string) => void;
   /** Fills the Terminais view instead of sitting as a bounded section under the tree. */
   fill?: boolean;
@@ -70,12 +73,11 @@ function RowAction({ label, testId, glyph, onClick }: { label: string; testId: s
  * launched configuration is a terminal row here, with the stop/restart/remove
  * actions. Closing a tab never stops anything — this is where that happens.
  */
-export function TerminalsSection({ openTerminalIds, onOpen, onRemoved, onEditLaunchJson, onError, fill = false }: TerminalsSectionProps): React.ReactElement {
+export function TerminalsSection({ openTerminalIds, onOpen, onRemoved, onEditLaunchJson, onOpenLaunchPicker, onError, fill = false }: TerminalsSectionProps): React.ReactElement {
   const { data: terminals = [] } = useTerminals();
   const routing = useFolderRouting();
-  const { data: launch } = useLaunchConfigs();
+  const { active: launchActive } = useAllLaunchConfigs();
   const createTerminal = useCreateTerminal();
-  const runConfig = useRunLaunchConfig();
   const killTerminal = useKillTerminal();
   const restartTerminal = useRestartTerminal();
   const removeTerminal = useRemoveTerminal();
@@ -229,24 +231,9 @@ export function TerminalsSection({ openTerminalIds, onOpen, onRemoved, onEditLau
           <MenuItem data-testid="terminals-menu-root" onClick={() => { closeMenu(); openShell(''); }}>Novo terminal na raiz</MenuItem>
         )}
         <MenuItem data-testid="terminals-menu-pick" onClick={() => { closeMenu(); setPickerOpen(true); }}>Novo terminal em…</MenuItem>
-        {(launch?.configs ?? []).map((config) => {
-          const reason = `Tipo '${config.type}'/request '${config.request}' não suportado — só node/launch pode ser executado`;
-          const item = (
-            <MenuItem
-              key={config.name}
-              disabled={!config.supported}
-              data-testid={`terminals-menu-launch-${config.name}`}
-              onClick={() => {
-                closeMenu();
-                runConfig.mutate({ configName: config.name, ...(routing.multi ? { folder: routing.folders[0] as string } : {}) }, { onSuccess: (terminal) => onOpen(terminal), onError: fail });
-              }}
-            >
-              <Icon glyph={Play} size={13} />
-              <Box component="span" sx={{ ml: 1 }}>{config.name}</Box>
-            </MenuItem>
-          );
-          return config.supported ? item : <Tooltip key={config.name} title={reason}><span>{item}</span></Tooltip>;
-        })}
+        {launchActive && (
+          <MenuItem data-testid="terminals-menu-open-launch-picker" onClick={() => { closeMenu(); onOpenLaunchPicker(); }}>Executar configuração…</MenuItem>
+        )}
         <MenuItem data-testid="terminals-menu-edit-launch" onClick={() => { closeMenu(); onEditLaunchJson(); }}>Editar launch.json</MenuItem>
       </Menu>
       <FolderPickerDialog

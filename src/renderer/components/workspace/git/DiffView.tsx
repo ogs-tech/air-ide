@@ -1,4 +1,4 @@
-import { alpha, Box, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { useGitDiff } from '../../../hooks/use-git.js';
 import type { GitDiffLine, GitDiffSource, GitFileDiff } from '../../../../shared/git.js';
 
@@ -82,13 +82,10 @@ function DiffRow({ line }: { line: GitDiffLine }): React.ReactElement {
       component="tr"
       data-testid={`git-diff-line-${line.kind}`}
       sx={(theme) => {
-        const color =
-          line.kind === 'add'
-            ? theme.palette.success.main
-            : line.kind === 'del'
-              ? theme.palette.error.main
-              : null;
-        return color ? { bgcolor: alpha(color, 0.12), '& .marker': { color } } : {};
+        const { diffAdd, diffRemove } = theme.ogs.workbench;
+        if (line.kind === 'add') return { bgcolor: diffAdd, '& .marker': { color: theme.palette.success.main } };
+        if (line.kind === 'del') return { bgcolor: diffRemove, '& .marker': { color: theme.palette.error.main } };
+        return {};
       }}
     >
       <Gutter value={line.oldNo} />
